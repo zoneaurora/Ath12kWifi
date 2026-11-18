@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -25,7 +26,16 @@ def resolve(name, source, check_only):
                         "--filter=blob:none", "--sparse", source["url"], str(directory)], check=True)
     revision = git(directory, "rev-parse", "HEAD")
     if revision != source["commit"]:
-        raise SystemExit(f"{name}: expected {source['commit']}, found {revision}; preserve the existing checkout and select the locked source")
+        # The upstream branch moved past the locked commit.  Fetch the exact
+        # revision instead of failing the whole kernel build; a shallow branch
+        # clone can never contain it.
+        fetched = subprocess.run(["git", "-C", str(directory), "fetch", "--depth", "1", "origin", source["commit"]],
+                                 capture_output=True, text=True)
+        if fetched.returncode == 0:
+            git(directory, "checkout", "--detach", source["commit"])
+            revision = git(directory, "rev-parse", "HEAD")
+    if revision != source["commit"]:
+        raise SystemExit(f"{name}: expected {source['commit']}, found {revision}")
     paths = [path.strip("/") for path in source["paths"]]
     # Some hosts have case-folding changes in unrelated kernel headers; only
     # imported source directories participate in this component's identity.
